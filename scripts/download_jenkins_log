@@ -1,0 +1,37 @@
+#!/usr/bin/python3
+# -*- coding: utf-8 -*-
+# vim:fenc=utf-8
+
+# Copyright © 18-5-24 foree <foree@foree-pc>
+
+# Distributed under terms of the MIT license.
+
+##############################################
+import requests
+import sys
+import os
+from requests.auth import HTTPBasicAuth
+
+sys.path.append(os.path.join(os.path.dirname(os.path.realpath(__file__)), os.pardir))
+
+from configs import config
+
+
+def get_basic_auth():
+    return HTTPBasicAuth(config.get_user_profile()['username'], config.get_user_profile()['password'])
+
+
+def get_jenkins_log(url):
+    url = url + 'Text'
+    r = requests.get(url, auth=get_basic_auth())
+    names = url.split('/')
+    log_file_name = names[-3] + '_' + names[-2] + '_' + names[-1]
+    with open(log_file_name, 'w') as f:
+        f.write(r.text)
+
+    print('fetch log finished!')
+
+
+if __name__ == '__main__':
+    input_url = input('输入log地址，console结尾:')
+    get_jenkins_log(input_url)

@@ -1,0 +1,21 @@
+{
+  "default": {
+    "systemui": {
+      "out_module_path": "system/priv-app/SystemUI/SystemUI.apk",
+      "signed_app_name": "SystemUI.apk"
+    },
+    "systemuitools": {
+      "out_module_path": "system/priv-app/SystemUITools/SystemUITools.apk",
+      "signed_app_name": "SystemUITools.apk"
+    },
+    "settings": {
+      "out_module_path": "system/priv-app/Settings/Settings.apk",
+      "signed_app_name": "Settings.apk"
+    }
+  },
+  "appsign_mount_path": "/mnt/apps4sign",
+  "mzfs_server_name": "MZFS",
+  "appsign_server_name": "apps4sign",
+  "appsign_server_ip": "172.16.16.39",
+  "appsign_jenkins_name": "SIGN_APPS"
+}

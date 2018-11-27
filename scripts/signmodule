@@ -1,0 +1,268 @@
+#!/usr/bin/python3
+# -*- coding: utf-8 -*-
+# vim:fenc=utf-8
+
+# Copyright © 18-7-12 foree <foree@foree-pc>
+
+# Distributed under terms of the MIT license.
+
+# ===========================================
+
+import json
+import argparse
+import logging
+import sys
+import time
+import os
+import shutil
+import subprocess
+from abc import ABCMeta, abstractmethod
+from smb.SMBConnection import SMBConnection
+
+sys.path.append(os.path.join(os.path.dirname(os.path.realpath(__file__)), os.pardir))
+
+from common import jenkins
+from configs import config
+
+SIGN_APP_JOB = ""
+SIGN_MOUNT_PATH = ""
+SIGN_SMB_IP = ""
+SIGN_SMB_SERVER_NETBIOS_NAME = ""
+SIGN_SMB_SERVER_NAME = ""
+
+ANDROID_PROJECT_TOPDIR_MAGIC_FILE = 'build/core/envsetup.mk'
+
+"""
+1. 初始化环境
+2. 查找当前项目的SystemUI.apk
+3. 触发签名
+4. push prd签名文件
+5. 重启
+"""
+
+
+class IFileOperator(metaclass=ABCMeta):
+    @abstractmethod
+    def upload_file(self, source_file, target_file):
+        print('upload_file: ' + source_file + ', ' + source_file)
+        pass
+
+    @abstractmethod
+    def download_file(self, source_file, target_file):
+        pass
+
+
+class SmbOperator(IFileOperator):
+    def __init__(self, username, password, server_share_path, server_netbios_name, server_ip):
+        self.conn = SMBConnection(username, password, "", server_netbios_name)
+        self.conn.connect(server_ip)
+        self.server_share_path = server_share_path
+
+    """
+    upload_path 远程服务器相对路径
+    """
+    def upload_file(self, source_file, target_file):
+        with open(source_file, 'rb') as f:
+            self.conn.storeFile(self.server_share_path, target_file, f)
+            return True
+
+    def download_file(self, source_file, target_file):
+        with open(target_file, 'wb') as f:
+            self.conn.retrieveFile(self.server_share_path, source_file, f)
+        return True
+
+
+class FSOperator(IFileOperator):
+    def __init__(self, mount_path):
+        self.mount_path = mount_path
+
+    def upload_file(self, source_file, target_file):
+        shutil.copy(source_file, os.path.join(self.mount_path, target_file))
+        return True
+
+    def download_file(self, source_file, target_file):
+        shutil.copy(os.path.join(self.mount_path, source_file), target_file)
+        return True
+
+
+def perform_sign():
+    """
+    触发签名，并等待完成
+    :return:
+    """
+    print("\nperforming sign...")
+    jenkin = jenkins.get_jenkins()
+    queue_item = jenkin[SIGN_APP_JOB].invoke(block=True)
+
+    print("build complete")
+
+
+def load_modules():
+    with open(config.SIGN_APPS_CONFIG) as f:
+        sign_config = json.load(f)
+
+    return sign_config['default'].keys()
+
+
+def load_config(key=None):
+    with open(config.SIGN_APPS_CONFIG) as f:
+        sign_config = json.load(f)
+
+    global SIGN_APP_JOB
+    SIGN_APP_JOB = sign_config['appsign_jenkins_name']
+    global SIGN_MOUNT_PATH
+    if 'appsign_mount_path' in sign_config.keys():
+        SIGN_MOUNT_PATH = sign_config['appsign_mount_path']
+    global SIGN_SMB_IP
+    SIGN_SMB_IP = sign_config['appsign_server_ip']
+    global SIGN_SMB_SERVER_NETBIOS_NAME
+    SIGN_SMB_SERVER_NETBIOS_NAME = sign_config['mzfs_server_name']
+    global SIGN_SMB_SERVER_NAME
+    SIGN_SMB_SERVER_NAME = sign_config['appsign_server_name']
+    if key:
+        return sign_config['default'][key]
+
+
+def init_env():
+    """
+    初始化环境：
+    1. appsign是否挂载，未挂载使用smb协议
+    2. 手机是否连接完成
+    3. 是否root，remount
+    :return:
+    """
+    # appsign 是否挂载
+    result = subprocess.check_output('mount', shell=True)
+    opertor = None
+    if len(SIGN_MOUNT_PATH) > 0 and result.decode('utf-8').rfind(SIGN_MOUNT_PATH) != -1:
+        print('apps4sign mount check successful')
+        opertor = FSOperator(SIGN_MOUNT_PATH)
+    else:
+        print("apps4sign not mounted! use smb protocol")
+        opertor = SmbOperator(config.get_user_profile()['username'], config.get_user_profile()['password'],
+                              SIGN_SMB_SERVER_NAME, SIGN_SMB_SERVER_NETBIOS_NAME, SIGN_SMB_IP)
+
+    # 检查手机是否成功连接
+    result = subprocess.check_output('adb devices', shell=True)
+    if result.decode('utf-8').rfind('device') != -1:
+        print('phone connect check successful')
+    else:
+        print('please connect phone')
+
+    # adb root, adb remount
+    if subprocess.check_call('adb root', shell=True) != 0:
+        exit(-1)
+    time.sleep(2)
+
+    if subprocess.check_call('adb remount', shell=True) != 0:
+        exit(-1)
+
+    return opertor
+
+
+def get_out_path():
+    """
+    获取项目的out目录，如果有多个，提示选择
+    :return:
+    """
+    root_path = get_root_path()
+
+    out_path = os.path.join(root_path, 'out/target/product')
+
+    out_list = os.listdir(out_path)
+    if len(out_list) == 1:
+        device_dir = out_list[0]
+    else:
+        # 选择一个
+        for i, device_dir in enumerate(out_list):
+            print(str(i) + '. ' + device_dir)
+
+        choice = input('请选择一个路径')
+        choice = int(choice)
+        if -1 < choice < len(out_list) + 1:
+            device_dir = out_list[choice]
+        else:
+            print('invalide input')
+            exit(-1)
+
+    # get abspath
+    out_path = os.path.join(out_path, device_dir)
+    logging.debug(out_path)
+    return out_path
+
+
+def get_root_path():
+    """
+    获取项目的根目录绝对路径
+    :return:
+    """
+    while True:
+        check_path = os.path.abspath(os.path.curdir)
+        if not os.path.exists(os.path.join(check_path, ANDROID_PROJECT_TOPDIR_MAGIC_FILE)):
+            # 检查父目录是否存在
+            if os.path.exists(os.pardir) and os.path.abspath(os.pardir) != '/':
+                os.chdir(os.pardir)
+            else:
+                # 父目录不存在或者检查到根目录未发现project存在，那么退出程序
+                print("Not Found Android Project Here!!")
+                exit(-1)
+
+        else:
+            # 如果目录存在
+            logging.debug(check_path)
+            return os.path.abspath(check_path)
+
+
+def main(key):
+    # load config
+    configs = load_config(key)
+
+    # init
+    operator = init_env()
+
+    # get module path
+    out_path = get_out_path()
+    up_source_file = os.path.join(out_path, configs['out_module_path'])
+    print(up_source_file)
+
+    up_target_file = os.path.join('platform', configs['signed_app_name'])
+
+    # copy source apk to sign server
+    print('\nupload file to server')
+    if os.path.isfile(up_source_file):
+        # upload file
+        operator.upload_file(up_source_file, up_target_file)
+
+    # perform build
+    perform_sign()
+
+    # download singed app
+    dn_target_file = os.path.join('/tmp', configs['signed_app_name'])
+    dn_source_file = os.path.join('platform', configs['signed_app_name'].replace(r'.', r'_prd.'))
+    operator.download_file(dn_source_file, dn_target_file)
+
+    # push to phone
+    cmd = 'adb push ' + dn_target_file + ' ' + '/' + configs['out_module_path']
+    print('\npush file to phone，' + cmd)
+    subprocess.call(cmd, shell=True)
+
+    # reboot
+    print('\n reboot ')
+    subprocess.call('adb reboot', shell=True)
+
+
+if __name__ == '__main__':
+
+    argparse = argparse.ArgumentParser(description="sign module and push to phone, only perform sign if no arguments")
+
+    group = argparse.add_mutually_exclusive_group()
+    # add systemui
+    group.add_argument("-m", choices=load_modules(), help="choose module")
+    args = argparse.parse_args()
+
+
+    if args.m:
+        main(args.m)
+    else:
+        load_config()
+        perform_sign()

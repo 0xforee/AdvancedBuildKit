@@ -1,0 +1,122 @@
+#! /usr/bin/python3
+# -*- coding: utf-8 -*-
+# vim:fenc=utf-8
+#
+# Copyright © 2018 foree <foree@foree-pc>
+#
+# Distributed under terms of the MIT license.
+
+"""
+根据分支关键字拉取指定分支
+"""
+
+import sys
+import subprocess
+import os
+
+REMOTE_URL_INFO = {
+    'xxxxx': 'review.rnd.xxxxx.com:29999',
+    'odc': 'odc.review.xxxxx.com:29418'
+}
+
+
+def push_gerrit(remote_name, remote_branch):
+    """
+    push当前分支到所对应的gerrit
+    :param remote_name: (odc, xxxxx, xxxxxapp)
+    :param remote_branch: 分析得出的远程分支
+    :return:
+    """
+    cmd = 'git push %s HEAD:refs/for/%s' % (remote_name, remote_branch)
+    print('\n==============================================')
+    print('trying push to gerrit: %s ' % cmd)
+    print('==============================================\n')
+    subprocess.call(cmd, shell=True)
+
+
+def push_heads(remote_name, remote_branch):
+    """
+    push当前分支到所对应的远程分支
+    :param remote_name: (odc, xxxxx, xxxxxapp)
+    :param remote_branch: 分析得出的远程分支
+    :return:
+    """
+    cmd = 'git push %s HEAD:refs/heads/%s' % (remote_name, remote_branch)
+    print('\n==============================================')
+    print('trying push to head: %s' % cmd)
+    print('==============================================\n')
+    subprocess.call(cmd, shell=True)
+
+
+def push_all(remote_name, remote_branch):
+    """
+    push到当前分支的gerrit和直接入库
+    :param remote_name: (odc, xxxxx, xxxxxapp)
+    :param remote_branch: 分析得出的远程分支
+    :return:
+    """
+    push_gerrit(remote_name, remote_branch)
+    push_heads(remote_name, remote_branch)
+
+
+def get_current_branch():
+    """
+    获取当前所在的分支，如果处于detach HEAD模式，返回None，否则返回本地分支名称
+    """
+
+    # 获取当前的git根目录，然后获取.git/HEAD来判断处于什么模式以及什么分支
+    cmd = 'git rev-parse --git-dir'
+    git_path = subprocess.check_output(cmd, shell=True, universal_newlines=True).strip()
+    with open(os.path.join(git_path, 'HEAD')) as f:
+        content = f.readline()
+        if content.startswith('ref:'):
+            # 返回本地分支名称
+            local_branch = content.replace('ref: refs/heads/', '')
+            print('local_branch = ' + local_branch)
+            return local_branch.strip()
+
+    return None
+
+
+def get_remote_branch():
+    """获取本地分支对应的远程分支"""
+
+    # get remote name
+    local_branch = get_current_branch()
+
+    remote_name = ''
+    remote_branch = ''
+
+    all_branch_config = str(subprocess.check_output('git config -l', shell=True, universal_newlines=True))
+    all_branch_config = all_branch_config.split('\n')
+    for config in all_branch_config:
+        # print(config)
+        remote_magic_suffix = 'branch.%s.remote' % local_branch
+        if config.startswith(remote_magic_suffix):
+            remote_name = config[config.find('=')+1:]
+
+        remote_magic_suffix = 'branch.%s.merge' % local_branch
+
+        if config.startswith(remote_magic_suffix):
+            remote_branch = config[config.find('=')+1:]
+            if remote_branch.startswith('refs/heads'):
+                remote_branch = remote_branch.replace('refs/heads/', '')
+
+    if remote_name and remote_branch:
+        print('remote_branch = ' + remote_name + '/' + remote_branch)
+        return remote_name, remote_branch
+    else:
+        print('current local branch not checkout from remote directly!!!')
+        return None
+
+
+if __name__ == '__main__':
+    name, branch = get_remote_branch()
+    if len(sys.argv) > 1:
+        if sys.argv[1] == 'all':
+            push_all(name, branch)
+        elif sys.argv[1] == 'heads':
+            push_heads(name, branch)
+    else:
+        # default option
+        push_gerrit(name, branch)

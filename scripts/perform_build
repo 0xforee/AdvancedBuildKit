@@ -1,0 +1,178 @@
+#!/usr/bin/python3
+# -*- coding: utf-8 -*-
+# vim:fenc=utf-8
+#
+# Copyright © 2017 root <root@foree-pc>
+#
+# Distributed under terms of the MIT license.
+
+"""
+通过给定的review链接构建响应的jenkins任务
+"""
+import logging
+import sys
+import time
+import os
+import re
+
+from requests.exceptions import HTTPError
+
+
+sys.path.append(os.path.join(os.path.dirname(os.path.realpath(__file__)), os.pardir))
+
+from common import jenkins, easy_gerrit
+from common.pygerrit import MergeCommitError
+from configs import config
+from common.jenkins import JenkinsJob, JenkinsParams, JenkinsCacheHelper
+
+PATH_COMMIT_INFO_PREFIX = config.PATH_COMMIT_INFO_PREFIX
+
+"""
+使用交互式操作启动一个Freestyle
+"""
+
+
+def start_task(base_branch=None, review_list=None):
+    """
+    启动一个task
+    :param base_branch: 未指定的project的默认分支
+    :param review_list: 需要获取信息的review list
+    """
+
+    if not base_branch:
+        base_branch = ''
+
+    param = choose_param(base_branch)
+
+    if not review_list:
+        review_list = easy_gerrit.generate_review_list()
+
+    project_info_str = parse_reviews(review_list)
+
+    param.project_info = project_info_str
+    # 启动jenkins任务
+    jenkins.start_task(param)
+
+    # 生成提测单
+    commit_info = easy_gerrit.get_commit_messages(review_list)
+    if commit_info:
+        with open(PATH_COMMIT_INFO_PREFIX + time.strftime('%Y_%m_%d'), 'a') as f:
+            f.write(commit_info)
+        print(commit_info)
+    else:
+        print('commit info is empty')
+
+
+def parse_reviews(review_list):
+    """
+    根据url列表获取detail信息并进行预处理.
+    """
+    project_info = {}
+
+    for review_url in review_list:
+        try:
+            result = easy_gerrit.fetch_review_info(review_url)
+            logging.debug('result = ' + str(result) + ', type(result) = ' + str(type(result)))
+            if result['project'] not in project_info:
+                # dict update的参数必须是list里加tuple(列表的元组是键值对), 而不是tuple和list
+                project_info.update([(result['project'], result['branch'])])
+        except ValueError as e:
+            logging.warning('invalid url %s, skip parse' % review_url.strip())
+            continue
+        except HTTPError as e:
+            logging.warning(e)
+            continue
+        except MergeCommitError as e:
+            logging.warning(e)
+            continue
+
+    # 使用,以及|构建project_info字符串
+    project_info_str = ""
+    index = 0
+    for i in project_info.items():
+        if index > 0:
+            project_info_str = project_info_str + "|" + "project=%s,branch=%s" % (i[0], i[1])
+        else:
+            project_info_str = "project=%s,branch=%s" % (i[0], i[1])
+
+        index += 1
+
+    return project_info_str
+
+
+def do_list_choice(source_list, keyword=''):
+    i = 0
+    chose_list = []
+    for choice in source_list:
+        if isinstance(choice, JenkinsJob):
+            print_branch = ''
+            for branch in choice.branch:
+                if re.search(keyword, branch, re.I):
+                    print_branch += branch + ' '
+
+            if print_branch:
+                print('    %d. %s[ %s ]' % (i, choice.name, print_branch))
+                chose_list.append(choice)
+                i += 1
+
+        elif isinstance(choice, str):
+            if re.search(keyword, choice, re.I):
+                print("    %d. %s" % (i, choice))
+                chose_list.append(choice)
+                i += 1
+
+    # if not match any, exit
+    if chose_list:
+        u_input = input("Select [0]:")
+        if not len(u_input.strip()):
+            user_input = 0
+        else:
+            user_input = int(u_input)
+
+        if -1 < user_input < i:
+            return chose_list[user_input]
+        else:
+            print("input not invalid, retry")
+            do_list_choice(source_list, keyword)
+    else:
+        print('Not found anything matched %s' % keyword)
+        exit(-1)
+
+
+def choose_param(branch_keyword=''):
+    """
+    从cache中加载base branches交由用户选择,如果keyword不为空，使用keyword进行模糊匹配
+    :return: 用户选择的base branch
+    """
+    jenkins_cache_helper = JenkinsCacheHelper()
+
+    # choose job first, if keyword is null, get all jobs
+    jobs = jenkins_cache_helper.get_jobs(branch_keyword)
+    print("请选择Job：")
+    job = do_list_choice(jobs, branch_keyword)
+
+    print("\n请选择分支：")
+    # maybe wo need choose branch
+    branch = do_list_choice(job.branch, branch_keyword)
+
+    # create new param
+    param = JenkinsParams(job.name, job.url, branch, "")
+
+    # choose type
+    print("\n请选择移动运营商版本：")
+    param.type = do_list_choice(job.type)
+    # param.type = ''
+
+    # choose variant
+    print("\n请选择固件类型：")
+    param.variant = do_list_choice(job.variant)
+
+    return param
+
+
+if __name__ == '__main__':
+    if len(sys.argv) > 1:
+        keyword = sys.argv[1]
+        start_task(keyword)
+    elif len(sys.argv) == 1:
+        start_task()

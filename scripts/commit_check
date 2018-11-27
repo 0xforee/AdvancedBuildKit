@@ -1,0 +1,136 @@
+#! /usr/bin/python3
+# -*- coding: utf-8 -*-
+# vim:fenc=utf-8
+#
+# Copyright © 2018 foree <foree@foree-pc>
+#
+# Distributed under terms of the MIT license.
+
+"""
+检查分支是否合入提交
+作用原理：
+checkout到某个分支，通过搜寻某个文件中是否存在某个关键字来检查变更是否合入
+-f file，多个分支可通过文件的方式给出，分支按行隔开
+-k keyword，要搜寻的关键字
+-t target_file，检查某个关键字是否在这个文件中
+-b branch，单个分支可以通过这种方式指定
+"""
+
+import subprocess
+import sys
+import time
+import os
+import argparse
+import json
+
+sys.path.append(os.path.join(os.path.dirname(os.path.realpath(__file__)), os.pardir))
+
+from common import easy_gerrit
+
+REMOTE_URL_INFO = {
+    'xxxxx': 'review.rnd.xxxxx.com:29999',
+    'odc': 'odc.review.xxxxx.com:29418'
+}
+
+
+def add_remote(project, remote):
+    """
+    为当前的project，增加remote，用于获取代码
+    :param project: 当前要操作的库
+    :param remote: 远程分支名称，为REMOTE_URL_INFO的其一
+    :return: True/False 添加成功/失败
+    """
+    output = subprocess.getoutput('git remote -v|head -1')
+    output = output.split()[1]
+    prefix = output[:output.index(project)].split('@')[0]
+    remote_url = prefix + '@' + REMOTE_URL_INFO[remote] + '/' + project
+    return subprocess.call('git remote add %s %s' % (remote, remote_url), shell=True) == 0
+
+
+def fetch_branch(project, branch):
+    """
+    下载指定project下，指定remote的对应的分支，如果是个人分子，不使用时间后缀
+    :param project: 要操作的project名称
+    :param branch: 要下载的分支
+    :return:
+    """
+
+    remote = easy_gerrit.get_remote_from_branch(project, branch)
+
+    # fetch branch
+    if subprocess.call('git fetch %s %s' % (remote, branch), shell=True) != 0:
+        # remote not exits, so add remote
+        print('\n remote %s not exits, adding it\n' % remote)
+        add_remote(project, remote)
+        # add finish, fetch again
+        subprocess.call('git fetch %s %s' % (remote, branch), shell=True)
+
+    # checkout to new branch
+
+    # 如果是个人分支，不使用时间后缀
+    if branch.startswith('xxxxx/'):
+        git_fetch_cmd = 'git checkout -b %s %s/%s' % (branch, remote, branch)
+    else:
+        update_time = time.strftime('%Y_%m%d_%H%M')
+        git_fetch_cmd = 'git checkout -b %s_%s %s/%s' % (branch, update_time, remote, branch)
+    subprocess.call(git_fetch_cmd, shell=True)
+
+
+def check_commit_exits(target_branches, target_keyword, target_check_file):
+    check_result = {}
+    for target_branch in target_branches:
+        if not target_branch:
+            continue
+        print('checking branch: ' + target_branch)
+        # firstly, fetch branch
+        fetch_branch(easy_gerrit.recognize_project(), target_branch)
+        # secondly, check commit exits
+        with open(target_check_file) as check_f:
+            print('check file: ' + target_check_file)
+            check_result[target_branch] = False
+            for line in check_f:
+                if line.find(keyword) != -1:
+                    check_result[target_branch] = True
+        print()
+
+    print_result(check_result)
+
+
+def print_result(check_result):
+    if type(check_result) == dict:
+        # thirdly, print result
+        for branch_str, result in check_result.items():
+            result_str = 'true' if result else 'false'
+            print('branch: ' + branch_str + ', result = ' + result_str)
+
+
+if __name__ == '__main__':
+    # parse args firstly
+    parser = argparse.ArgumentParser(description='Check commit if exits at target branch, '
+                                                 'must be run at Android Project Workspace')
+
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument('-f', '--file', help='包含多个需要检查分支的文件')
+    group.add_argument('-b', '--branch', help='指定需要检查的分支')
+
+    parser.add_argument('-t', '--target_file', help='需要检查的文件')
+    parser.add_argument('-k', '--keyword', help='需要检查的关键字')
+
+    args = parser.parse_args()
+
+    branch = args.branch
+    keyword = args.keyword
+    input_file = args.file
+    check_file = args.target_file
+
+    branches = []
+    if input_file:
+        with open(input_file) as f:
+            for branch in f:
+                branches.append(branch.strip())
+    else:
+        branches.append(branch)
+
+    check_commit_exits(branches, keyword, check_file)
+
+

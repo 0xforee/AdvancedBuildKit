@@ -1,0 +1,83 @@
+#! /usr/bin/python3
+# -*- coding: utf-8 -*-
+# vim:fenc=utf-8
+#
+# Copyright © 2018 foree <foree@foree-pc>
+#
+# Distributed under terms of the MIT license.
+
+"""
+根据分支关键字拉取指定分支
+"""
+
+import subprocess
+import sys
+import time
+import os
+
+sys.path.append(os.path.join(os.path.dirname(os.path.realpath(__file__)), os.pardir))
+
+from common import easy_gerrit
+
+REMOTE_URL_INFO = {
+    'xxxxx': 'review.rnd.xxxxx.com:29999',
+    'odc': 'odc.review.xxxxx.com:29418'
+}
+
+
+def add_remote(project, remote):
+    """
+    为当前的project，增加remote，用于获取代码
+    :param project: 当前要操作的库
+    :param remote: 远程分支名称，为REMOTE_URL_INFO的其一
+    :return: True/False 添加成功/失败
+    """
+    output = subprocess.getoutput('git remote -v|head -1')
+    output = output.split()[1]
+    prefix = output[:output.index(project)].split('@')[0]
+    remote_url = prefix + '@' + REMOTE_URL_INFO[remote] + '/' + project
+    return subprocess.call('git remote add %s %s' % (remote, remote_url), shell=True) == 0
+
+
+def fetch_branch(project, branch):
+    """
+    下载指定project下，指定remote的对应的分支，如果是个人分子，不使用时间后缀
+    :param project: 要操作的project名称
+    :param branch: 要下载的分支
+    :return:
+    """
+
+    remote = easy_gerrit.get_remote_from_branch(project, branch)
+
+    # fetch branch
+    if subprocess.call('git fetch %s %s' % (remote, branch), shell=True) != 0:
+        # remote not exits, so add remote
+        print('\n remote %s not exits, adding it\n' % remote)
+        add_remote(project, remote)
+        # add finish, fetch again
+        subprocess.call('git fetch %s %s' % (remote, branch), shell=True)
+
+    # checkout to new branch
+
+    # 如果是个人分支，不使用时间后缀
+    if branch.startswith('xxxxx/'):
+        git_fetch_cmd = 'git checkout -b %s %s/%s' % (branch, remote, branch)
+    else:
+        update_time = time.strftime('%Y_%m%d_%H%M')
+        git_fetch_cmd = 'git checkout -b %s_%s %s/%s' % (branch, update_time, remote, branch)
+    subprocess.call(git_fetch_cmd, shell=True)
+
+
+if __name__ == '__main__':
+    fetch_branch_name = ''
+    current_project = easy_gerrit.recognize_project()
+
+    if len(sys.argv) > 1:
+        keyword = sys.argv[1]
+        fetch_branch_name = easy_gerrit.chose_branch(current_project, keyword)
+    elif len(sys.argv) == 1:
+        fetch_branch_name = easy_gerrit.chose_branch(current_project)
+
+    if fetch_branch_name:
+        fetch_branch(current_project, fetch_branch_name)
+

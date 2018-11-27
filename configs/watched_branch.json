@@ -1,0 +1,41 @@
+{
+  "defconfig": [
+    {
+      "id": "4",
+      "watched_enabled": true,
+      "watched_tasks": [
+        {
+          "params": {
+            "name": "XXXXX-A",
+            "base_branch": "A_base",
+            "suffix_name": "每日bug验证A_bugfix_by_abkit"
+          },
+          "watched_enabled": true,
+          "watched_branches": [
+            {
+              "project": "platform/frameworks/base",
+              "branch": "dev3_systemui_A_bugfix"
+            }
+          ]
+        },
+        {
+          "params": {
+            "name": "XXXXX-B",
+            "base_branch": "B_base",
+            "suffix_name": "每日bug验证B_bugfix_by_abkit"
+          },
+          "watched_enabled": true,
+          "watched_branches": [
+            {
+              "project": "platform/frameworks/base",
+              "branch": "dev3_systemui_B_bugfix"
+            }
+          ]
+        }
+      ],
+      "description": "通知中心每日构建",
+      "dingtalk_webhook": "https://oapi.dingtalk.com/robot/send?access_token=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "redmine_key": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    }
+  ]
+}

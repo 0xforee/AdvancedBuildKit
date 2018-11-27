@@ -1,0 +1,231 @@
+#!/usr/bin/python3
+# -*- coding: utf-8 -*-
+# vim:fenc=utf-8
+
+# Copyright © 18-10-19 foree <foree@foree-pc>
+
+# Distributed under terms of the MIT license.
+
+# ===========================================
+
+
+import sys
+import os
+
+sys.path.append(os.path.join(os.path.dirname(os.path.realpath(__file__)), os.pardir))
+
+from common import easy_gerrit
+from common.pygerrit import Revisions
+from configs import config
+import subprocess
+import time
+import argparse
+
+REMOTE_URL_INFO = {
+    'xxxxx': 'review.rnd.xxxxx.com:29999',
+    'odc': 'odc.review.xxxxx.com:29418'
+}
+
+
+def add_remote(project, remote):
+    """
+    为当前的project，增加remote，用于获取代码
+    :param project: 当前要操作的库
+    :param remote: 远程分支名称，为REMOTE_URL_INFO的其一
+    :return: True/False 添加成功/失败
+    """
+    output = subprocess.getoutput('git remote -v|head -1')
+    output = output.split()[1]
+    prefix = output[:output.index(project)].split('@')[0]
+    remote_url = prefix + '@' + REMOTE_URL_INFO[remote] + '/' + project
+    return subprocess.call('git remote add %s %s' % (remote, remote_url), shell=True) == 0
+
+
+def fetch_branch(project, branch):
+    """
+    下载指定project下，指定remote的对应的分支，如果是个人分子，不使用时间后缀
+    :param project: 要操作的project名称
+    :param branch: 要下载的分支
+    :return:
+    """
+
+    remote = easy_gerrit.get_remote_from_branch(project, branch)
+
+    # fetch branch
+    if subprocess.call('git fetch %s %s' % (remote, branch), shell=True) != 0:
+        # remote not exits, so add remote
+        print('\n remote %s not exits, adding it\n' % remote)
+        add_remote(project, remote)
+        # add finish, fetch again
+        subprocess.call('git fetch %s %s' % (remote, branch), shell=True)
+
+    # checkout to new branch
+
+    # 如果是个人分支，不使用时间后缀
+    if branch.startswith('xxxxx/'):
+        git_fetch_cmd = 'git checkout -b %s %s/%s' % (branch, remote, branch)
+    else:
+        update_time = time.strftime('%Y_%m%d_%H%M')
+        git_fetch_cmd = 'git checkout -b %s_%s %s/%s' % (branch, update_time, remote, branch)
+    subprocess.call(git_fetch_cmd, shell=True)
+
+
+def choose_style():
+    styles = ["xxxxx", "odc"]
+    """
+    选择方式:
+    odc --> xxxxx
+    xxxxx --> odc
+    :return: 
+    """
+    # print("0. odc --> xxxxx")
+    print("1. xxxxx --> odc")
+    select = input("Select[0]:")
+    if len(select.strip()) == 0:
+        select = 0
+    print("choose odc")
+    return "odc"
+
+
+def choose_target_branch(target):
+    """
+    选择目标分支
+    :return:
+    """
+    target = "M1813_MOF7_base"
+    print("choose " + target)
+    return target
+
+
+def download_and_checkout(branch):
+    """
+    下载分支并checkout
+    :param branch: 分支名称
+    :return:
+    """
+    pass
+
+
+def valid_workspace():
+    """
+    检查当前工作区是否合法，工作区与git仓库要符合
+    :return:
+    """
+    project_name = easy_gerrit.recognize_project()
+
+    return project_name
+
+
+def do_cp():
+    """
+    执行cherry-pick操作，并push到指定分支
+    :return:
+    """
+    review_list = []
+    if not review_list:
+        review_list = easy_gerrit.generate_review_list()
+
+    for review_url in review_list:
+        revision = easy_gerrit.get_commit_revision(review_url)
+        print(revision.refs)
+        print(revision.url)
+
+        fetch_cmd = "git fetch " + revision.url + " " + revision.refs + " && git cherry-pick FETCH_HEAD"
+        print(fetch_cmd)
+        subprocess.check_output(fetch_cmd, shell=True)
+
+
+def push_gerrit(project, remote_branch):
+    """
+    push当前分支到所对应的gerrit
+    :param remote_name: (odc, xxxxx, xxxxxapp)
+    :param remote_branch: 分析得出的远程分支
+    :return:
+    """
+    remote_name = easy_gerrit.get_remote_from_branch(project, remote_branch)
+
+    cmd = 'git push %s HEAD:refs/for/%s' % (remote_name, remote_branch)
+    print('\n==============================================')
+    print('trying push to gerrit: %s ' % cmd)
+    print('==============================================\n')
+    subprocess.call(cmd, shell=True)
+
+
+def main():
+    project_name = valid_workspace()
+
+    style = choose_style()
+
+    branch = choose_target_branch(style)
+
+    fetch_branch(project_name, branch)
+
+    do_cp()
+
+    push_gerrit(style, branch)
+
+
+def cpAtoB(branches, reviews):
+    project_name = valid_workspace()
+
+    for branch in branches:
+        if not branch:
+            continue
+        print("\n operate %s start " % branch)
+
+        if not reviews:
+            print("\n collecting review urls")
+            reviews = easy_gerrit.generate_review_list()
+
+        print("\n checkout %s" % branch)
+
+        fetch_branch(project_name, branch)
+
+        print("\n do cherry-pick ")
+        for review_url in reviews:
+            revision = easy_gerrit.get_commit_revision(review_url)
+            print(revision.refs)
+            print(revision.url)
+
+            fetch_cmd = "git fetch " + revision.url + " " + revision.refs + " && git cherry-pick FETCH_HEAD"
+            print(fetch_cmd)
+            subprocess.check_output(fetch_cmd, shell=True)
+
+        print("\n cherry-pick done, push to gerrit")
+        push_gerrit(project_name, branch)
+
+
+if __name__ == "__main__":
+    # parse args firstly
+    parser = argparse.ArgumentParser(description='cherry-pick some commits to some branches')
+
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument('-f', '--file', help='包含多个分支的文件')
+    group.add_argument('-b', '--branch', help='指定需要检查的分支')
+
+    parser.add_argument('-t', '--target_file', help='包含需要cp的gerrit链接')
+
+    args = parser.parse_args()
+
+    branch = args.branch
+    input_file = args.file
+    target_file = args.target_file
+
+    branches = []
+    if input_file:
+        with open(input_file) as f:
+            for branch in f:
+                if len(branch) > 0 and branch[0].isupper():
+                    branches.append(branch.strip())
+    else:
+        branches.append(branch)
+
+    reviews = []
+    if target_file:
+        with open(target_file) as f:
+            for url in f:
+                if url.startswith('http'):
+                    reviews.append(url)
+
+
+    cpAtoB(branches, reviews)

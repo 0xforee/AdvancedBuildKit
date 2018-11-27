@@ -1,0 +1,35 @@
+#! /usr/bin/python3
+# -*- coding: utf-8 -*-
+# vim:fenc=utf-8
+#
+# Copyright © 2017 foree <foree@foree-pc>
+#
+# Distributed under terms of the MIT license.
+
+import time
+import sys
+import os
+
+sys.path.append(os.path.join(os.path.dirname(os.path.realpath(__file__)), os.pardir))
+
+from common import easy_gerrit
+from common import redmine
+from configs import config
+
+if __name__ == '__main__':
+    # test
+    if config.DEBUG:
+        # debug模式，只测试robot信息
+        issue_id = redmine.generate_table(config.get_redmine_key(), 'test')
+    else:
+        reviews = easy_gerrit.generate_review_list()
+        str_description = easy_gerrit.get_commit_messages(reviews)
+        if str_description:
+            month = time.localtime().tm_mon
+            day = time.localtime().tm_mday - 1
+
+            issue_id = redmine.generate_table(config.get_redmine_key(), str_description)
+            # test_delete()
+            print(time.ctime() + ' update!')
+        else:
+            print('description is empty')

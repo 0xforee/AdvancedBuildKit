@@ -1,0 +1,32 @@
+#! /usr/bin/python3
+# -*- coding: utf-8 -*-
+# vim:fenc=utf-8
+#
+# Copyright © 2018 foree <foree@foree-pc>
+#
+# Distributed under terms of the MIT license.
+
+import sys
+import os
+
+sys.path.append(os.path.join(os.path.dirname(os.path.realpath(__file__)), os.pardir))
+
+from common import easy_gerrit
+from configs import config
+
+if __name__ == '__main__':
+    input_initial_revision = ''
+    current_project = easy_gerrit.recognize_project()
+
+    if config.DEBUG:
+        print(current_project)
+
+    if len(sys.argv) > 1:
+        keyword = sys.argv[1]
+        input_initial_revision = easy_gerrit.chose_branch(current_project, keyword, filter_personal=True)
+    elif len(sys.argv) == 1:
+        input_initial_revision = easy_gerrit.chose_branch(current_project)
+
+    if input_initial_revision:
+        input_new = input("请输入要创建分支的名称: ")
+        easy_gerrit.create_branch(current_project, input_initial_revision, input_new)
