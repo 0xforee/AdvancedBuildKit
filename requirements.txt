@@ -1,7 +1,7 @@
 jenkinsapi==0.3.6
 APScheduler==3.5.1
 python_redmine==2.0.2
-urllib3==1.22
+urllib3==1.26.5
 requests==2.18.4
 beautifulsoup4==4.6.3
 pysmb==1.1.25
